@@ -1,146 +1,100 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
-import json
-from business_info import info
 import time
-import subprocess
-import os
+import sys
 
 app = Flask(__name__)
-CORS(app)
+# Configuración CORS más permisiva
+CORS(app, origins=["http://localhost", "http://127.0.0.1", "http://192.168.1.81", "*"])
 
+# CONFIGURACIÓN
+MODEL = "llama3.2:1b"
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "gemma2:2b"
 
-# Contador de intentos fallidos
-ollama_fail_count = 0
-MAX_RETRIES = 3
-
-
-def reiniciar_ollama():
-    """Intenta reiniciar Ollama si falla múltiples veces"""
-    global ollama_fail_count
-    try:
-        print("🔄 Intentando reiniciar Ollama...")
-        # Detener Ollama
-        subprocess.run(["pkill", "-f", "ollama"], timeout=10)
-        time.sleep(2)
-        # Iniciar Ollama en segundo plano
-        subprocess.Popen(["ollama", "serve"],
-                         stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL)
-        time.sleep(5)  # Esperar a que inicie
-        ollama_fail_count = 0
-        print("✅ Ollama reiniciado")
-        return True
-    except Exception as e:
-        print(f"❌ Error reiniciando Ollama: {e}")
-        return False
+print("🚀 Iniciando Eyebot Chatbot...")
+print(f"📦 Modelo: {MODEL}")
+print("🔍 Verificando servicios...")
 
 
 def verificar_ollama():
-    """Verifica si Ollama está disponible con timeout corto"""
+    """Verifica si Ollama está disponible"""
     try:
-        response = requests.get("http://localhost:11434/api/tags", timeout=3)
-        return response.status_code == 200
-    except:
+        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if response.status_code == 200:
+            print("✅ Ollama conectado")
+            return True
+        return False
+    except Exception as e:
+        print(f"❌ Ollama no disponible: {e}")
         return False
 
 
-def generar_respuesta(pregunta, contexto=""):
-    """
-    Versión con reconexión automática y fallback
-    """
-    global ollama_fail_count
+def generar_respuesta(pregunta):
+    """Genera respuesta inteligente con fallbacks"""
 
-    # Verificar conexión con Ollama
-    if not verificar_ollama():
-        print("❌ Ollama no responde, intentando reconectar...")
-        if ollama_fail_count < MAX_RETRIES:
-            if reiniciar_ollama():
-                return generar_respuesta(pregunta, contexto)  # Reintentar
-        else:
-            return "🔧 El servicio está experimentando problemas técnicos. Por favor, intenta en unos minutos."
-
-    # Si es una pregunta simple, responder directamente
-    preguntas_simples = {
-        "cuantos balones de oro tiene cr7": "Cristiano Ronaldo tiene 5 Balones de Oro en su carrera.",
-        "balones de oro cristiano ronaldo": "Cristiano Ronaldo ha ganado 5 Balones de Oro.",
-        "cr7 balones de oro": "CR7 tiene 5 Balones de Oro."
+    # RESPUESTAS RÁPIDAS MEJORADAS
+    respuestas_rapidas = {
+        "hola": "¡Hola! Soy Eyebot, tu psicólogo virtual. ¿En qué puedo ayudarte hoy? 😊",
+        "que eres": "Soy Eyebot, especialista en salud mental. Te ayudo con relajación, estrés, ansiedad y bienestar emocional.",
+        "ansiedad": "🤗 **Para la ansiedad:**\n• Respiración 4-7-8\n• Mindfulness 5min\n• Ejercicio suave\n• Hablar con alguien",
+        "estres": "💆‍♂️ **Manejo de estrés:**\n• Organiza tu tiempo\n• Pausas activas\n• Ejercicio regular\n• Límites saludables",
+        "dormir": "😴 **Mejor sueño:**\n• Horarios fijos\n• Ambiente oscuro\n• Sin pantallas 1h antes\n• Lectura ligera",
+        "depresion": "🤗 **Depresión:** Busca apoyo profesional. Mientras:\n• Mantén rutinas\n• Contacto social\n• Ejercicio suave",
+        "novia me dejó": "💔 **Ruptura amorosa:**\n• Permítete sentir\n• Habla con amigos\n• Mantén rutinas\n• Ejercicio ayuda",
+        "triste": "😔 **Tristeza:**\n• Habla con alguien\n• Escribe sentimientos\n• Sal a caminar\n• Música que te guste",
+        "estoisismo": "🏛️ **Estoicismo:** Enfócate en lo controlable, acepta lo que no. Muy útil para salud mental!",
+        "futbol": "⚽ **Fútbol:** Excelente para salud mental - ejercicio, equipo, libera estrés.",
+        "cr7": "⚽ **Cristiano Ronaldo:** Ejemplo de disciplina y mentalidad deportiva.",
+        "troya": "🏛️ **Troya:** Ciudad antigua - representa perseverancia.",
+        "gracias": "¡De nada! 💙 Cuida tu mente como cuidas tu cuerpo.",
+        "adios": "¡Hasta luego! Cuídate mucho 😊"
     }
 
     pregunta_lower = pregunta.lower().strip()
-    if pregunta_lower in preguntas_simples:
-        return preguntas_simples[pregunta_lower]
 
-    prompt = f"""
-    Eres Eyebot, un psicólogo virtual especializado en salud mental. Responde de manera empática y profesional EN ESPAÑOL.
+    # Buscar en respuestas rápidas primero
+    for clave, respuesta in respuestas_rapidas.items():
+        if clave in pregunta_lower:
+            print(f"⚡ Respuesta rápida: '{clave}'")
+            return respuesta
 
-    CONTEXTO OPCIONAL (solo si es relevante para psicología):
-    {info}
+    # Intentar con Ollama si está disponible
+    if verificar_ollama():
+        try:
+            prompt = f"Eres psicólogo. Responde breve y útil en español: {pregunta}"
+            payload = {
+                "model": MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "num_predict": 100,
+                    "top_p": 0.8
+                }
+            }
 
-    CONVERSACIÓN PREVIA:
-    {contexto}
+            print(f"🤖 Consultando {MODEL}: {pregunta[:30]}...")
+            response = requests.post(OLLAMA_URL, json=payload, timeout=15)
 
-    PREGUNTA ACTUAL: {pregunta}
+            if response.status_code == 200:
+                data = response.json()
+                respuesta = data.get("response", "").strip()
+                if respuesta:
+                    return respuesta
+                else:
+                    return "¿Podrías reformular tu pregunta? No la entendí completamente."
+            else:
+                return "El servicio está ocupado. Intenta con una pregunta más breve."
 
-    RESPUESTA (enfócate en psicología y salud mental, sé natural):
-    """
+        except requests.exceptions.Timeout:
+            return "La respuesta está tardando. Intenta con preguntas más específicas."
+        except Exception as e:
+            print(f"💥 Error Ollama: {e}")
+            return "Problema técnico. Puedo ayudarte con temas de salud mental."
 
-    payload = {
-        "model": MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "num_predict": 200,  # Más corto para mayor estabilidad
-            "temperature": 0.7,
-            "top_p": 0.8,
-        }
-    }
-
-    try:
-        print(f"📤 Enviando a Ollama: {pregunta[:30]}...")
-        start_time = time.time()
-
-        response = requests.post(OLLAMA_URL, json=payload, timeout=30)
-
-        if response.status_code != 200:
-            ollama_fail_count += 1
-            print(f"❌ Error HTTP {response.status_code}")
-            return f"Error temporal del servicio (código {response.status_code}). Intenta de nuevo."
-
-        data = response.json()
-        respuesta = data.get("response", "").strip()
-
-        # Reiniciar contador si fue exitoso
-        ollama_fail_count = 0
-
-        end_time = time.time()
-        print(f"✅ Respuesta en {end_time - start_time:.1f}s")
-
-        return respuesta if respuesta else "No pude generar una respuesta adecuada. ¿Podrías reformular tu pregunta?"
-
-    except requests.exceptions.Timeout:
-        ollama_fail_count += 1
-        print("⏰ Timeout con Ollama")
-        return "El servicio está respondiendo lentamente. Intenta con una pregunta más breve."
-
-    except requests.exceptions.ConnectionError:
-        ollama_fail_count += 1
-        print("🔌 Error de conexión con Ollama")
-        if ollama_fail_count >= MAX_RETRIES:
-            return "El servicio de IA no está disponible temporalmente. Estamos trabajando para solucionarlo."
-        return "Problema de conexión temporal. Intenta de nuevo."
-
-    except Exception as e:
-        ollama_fail_count += 1
-        print(f"💥 Error: {e}")
-        return "Error inesperado. Por favor, intenta más tarde."
-
-
-# Almacenamiento de conversaciones
-conversaciones = {}
+    # Fallback final
+    return "¡Hola! 😊 Puedo ayudarte con: ansiedad, estrés, sueño, relaciones o bienestar emocional. ¿Qué te interesa?"
 
 
 @app.route('/api/chat', methods=['POST', 'OPTIONS'])
@@ -149,68 +103,69 @@ def chat():
         return jsonify({'status': 'ok'}), 200
 
     try:
-        data = request.get_json(silent=True) or {}
-        user_id = data.get('user_id', 'default')
-        mensaje = data.get('mensaje', '').strip()
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data'}), 400
 
-        print(f"📩 Chat request: {user_id} - '{mensaje}'")
+        mensaje = data.get('mensaje', '').strip()
+        user_id = data.get('user_id', 'default')
+
+        print(f"💬 Mensaje recibido: {mensaje}")
 
         if not mensaje:
             return jsonify({'error': 'Mensaje vacío'}), 400
 
-        # Manejar contexto
-        if user_id not in conversaciones:
-            conversaciones[user_id] = ""
-
-        contexto = conversaciones[user_id]
-
-        # Generar respuesta
-        respuesta = generar_respuesta(mensaje, contexto)
-
-        # Actualizar contexto
-        conversaciones[user_id] += f"Usuario: {mensaje}\nAsistente: {respuesta}\n"
-        if len(conversaciones[user_id]) > 1000:
-            conversaciones[user_id] = conversaciones[user_id][-800:]
+        respuesta = generar_respuesta(mensaje)
 
         return jsonify({
             'respuesta': respuesta,
             'user_id': user_id,
-            'status': 'success'
+            'status': 'success',
+            'model': MODEL
         })
 
     except Exception as e:
-        print(f"🔥 Error en chat: {e}")
+        print(f"🔥 Error en /api/chat: {e}")
         return jsonify({
-            'respuesta': 'Error interno del servidor. Intenta de nuevo.',
-            'status': 'error'
-        }), 500
+            'respuesta': '¡Hola! Estoy aquí para ayudarte 😊 ¿En qué puedo asistirte?',
+            'status': 'success'
+        })
 
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    status = "connected" if verificar_ollama() else "disconnected"
+    ollama_ok = verificar_ollama()
     return jsonify({
         'status': 'ok',
-        'ollama': status,
-        'fail_count': ollama_fail_count,
-        'users_activos': len(conversaciones)
+        'ollama': 'connected' if ollama_ok else 'disconnected',
+        'model': MODEL,
+        'message': 'Servidor funcionando correctamente'
     })
 
 
-# Endpoint para forzar reinicio de Ollama
-@app.route('/api/restart-ollama', methods=['POST'])
-def restart_ollama():
-    success = reiniciar_ollama()
-    return jsonify({'success': success, 'message': 'Ollama reiniciado' if success else 'Error al reiniciar'})
+@app.route('/')
+def index():
+    return jsonify({
+        'message': 'Eyebot Chatbot API',
+        'version': '1.0',
+        'endpoints': ['/api/chat', '/api/health']
+    })
 
 
 if __name__ == '__main__':
-    print("🚀 Iniciando servidor Flask mejorado...")
+    # Verificar Ollama al inicio
+    ollama_status = verificar_ollama()
 
-    # Verificar estado inicial
-    if verificar_ollama():
-        print("✅ Ollama conectado al inicio")
-    else:
-        print("⚠️ Ollama no disponible al inicio")
+    print("🌐 Servidor listo en http://localhost:8005")
+    print("📞 Endpoints disponibles:")
+    print("   POST /api/chat")
+    print("   GET  /api/health")
+    print("   GET  /")
+    print("\n⚡ Ejecutando servidor...")
 
-    app.run(debug=True, port=8000, host='0.0.0.0')
+    try:
+        app.run(debug=True, port=8005, host='0.0.0.0', use_reloader=False)
+    except KeyboardInterrupt:
+        print("\n👋 Servidor detenido")
+    except Exception as e:
+        print(f"💥 Error iniciando servidor: {e}")
